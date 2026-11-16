@@ -53,7 +53,8 @@
   #warn .btn { margin-left:8px; padding:2px 10px; font-size:12px; }
 
   /* 版面 */
-  main { padding:14px 16px 36px; display:grid; gap:16px; grid-template-columns:minmax(0,1fr); max-width:1500px; margin:0 auto; }
+  main { padding:14px 16px 36px; display:grid; gap:16px; grid-template-columns:minmax(0,1fr); max-width:1500px; margin:0 auto;
+         align-content:start; /* 页面高度被撑住时，多出来的空间留在最底下，不要分摊到各行把模块往下推 */ }
   @media (min-width:860px) { main { grid-template-columns:minmax(0,1.15fr) minmax(0,1fr); align-items:start; } .wide { grid-column:1 / -1; } }
   .title { display:flex; align-items:baseline; gap:10px; margin:0 4px 8px; }
   .title h2 { margin:0; font-size:17px; font-weight:600; letter-spacing:-.02em; }
@@ -185,6 +186,23 @@ const DEFAULT_SUM = '每次点"停止"后自动生成英文纪要，和文稿一
 let S = null, ctxLoaded = false, multi = false, lastTopId = 0, source = store.get('source') || 'system';
 const last = { subs:'', cards:'', tx:'' };
 
+/* ---------- 防止页面"回弹" ----------
+   页面变短时（把模块拖矮、双击恢复默认、收起背景资料），如果当前滚动位置超出了新的页面长度，
+   浏览器会瞬间把页面滚回去，看起来就是画面一跳。做法：变短之前先撑住页面高度（holdPage），
+   之后只保留"当前滚动位置所需"的高度（relaxPage），等用户自己往上滚时再逐步放掉。 */
+const mainEl = document.querySelector('main');
+let held = 0;
+function holdPage(){ held = Math.max(held, mainEl.offsetHeight); mainEl.style.minHeight = held + 'px'; }
+function relaxPage(){
+  if (!held) return;
+  const need = Math.ceil(window.scrollY + window.innerHeight - mainEl.offsetTop);   // 让页面底部刚好够到窗口底部
+  held = Math.min(held, need);
+  if (window.scrollY <= 0 || held <= 0) { held = 0; mainEl.style.minHeight = ''; }
+  else mainEl.style.minHeight = held + 'px';
+}
+window.addEventListener('scroll', relaxPage, { passive:true });
+window.addEventListener('resize', relaxPage);
+
 /* ---------- 三个模块的高度：拖动下方的小横条调节，自动记住；双击恢复默认 ---------- */
 document.querySelectorAll('.grip').forEach(g => {
   const pane = $(g.dataset.for), key = 'h_' + g.dataset.for;
@@ -193,22 +211,26 @@ document.querySelectorAll('.grip').forEach(g => {
   const apply = h => { const cap = window.innerHeight > 200 ? window.innerHeight * 0.9 : 4000; pane.style.height = Math.round(Math.max(min, Math.min(h, cap))) + 'px'; };
   apply(+store.get(key) || def);
   g.addEventListener('pointerdown', e => {
+    if (e.button !== 0) return;
     e.preventDefault(); g.setPointerCapture(e.pointerId); g.classList.add('drag');
-    // 用"鼠标在整页里的位置"（含滚动量）算高度：模块变高变矮时页面会跟着滚，只看窗口内位置会对不上而乱跳
-    const y0 = e.pageY, h0 = pane.offsetHeight, main = document.querySelector('main');
-    // 拖动期间锁住页面总高度，模块变矮时页面不会回弹
-    main.style.minHeight = main.offsetHeight + 'px';
+    // 用"鼠标在整页里的位置"（含滚动量）算高度：只看窗口内位置的话，页面一滚就对不上
+    const y0 = e.pageY, h0 = pane.offsetHeight;
+    holdPage();
     const move = ev => apply(h0 + ev.pageY - y0);
     const up = () => {
       g.classList.remove('drag'); g.removeEventListener('pointermove', move);
-      main.style.minHeight = ''; store.set(key, pane.offsetHeight);
+      g.removeEventListener('pointerup', up); g.removeEventListener('pointercancel', up); g.removeEventListener('lostpointercapture', up);
+      store.set(key, pane.offsetHeight); relaxPage();
     };
     g.addEventListener('pointermove', move);
-    g.addEventListener('pointerup', up, { once:true });
-    g.addEventListener('pointercancel', up, { once:true });
+    g.addEventListener('pointerup', up);
+    g.addEventListener('pointercancel', up);
+    g.addEventListener('lostpointercapture', up);
   });
-  g.addEventListener('dblclick', () => { apply(def); store.set(key, def); });
+  g.addEventListener('dblclick', () => { holdPage(); apply(def); store.set(key, def); relaxPage(); });
 });
+// 收起"我的背景资料"也会让页面变短
+document.querySelectorAll('details > summary').forEach(sm => sm.addEventListener('click', () => { holdPage(); requestAnimationFrame(relaxPage); }));
 
 /* ---------- 声音来源（分段控件） ---------- */
 function paintSource(){ document.querySelectorAll('#source button').forEach(b => b.classList.toggle('on', b.dataset.v === source)); }
