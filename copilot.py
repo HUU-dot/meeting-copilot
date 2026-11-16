@@ -92,6 +92,9 @@ state = {
 }
 _proc = None
 _overlay = None
+_reader_thread = None     # 读引擎事件的线程；引擎退出后它负责保存文稿并启动纪要
+_sum_thread = None        # 正在生成纪要的线程
+_shutting_down = False
 _card_id = 0
 
 
@@ -338,6 +341,7 @@ def handle_event(ev):
 
 
 def reader(proc):
+    global _sum_thread
     for raw in proc.stdout:
         try:
             handle_event(json.loads(raw))
@@ -355,7 +359,8 @@ def reader(proc):
     save_transcript()
     # 会议结束：自动生成纪要（内容太少就不生成）
     if d and len(lines) >= MIN_LINES_FOR_SUMMARY:
-        threading.Thread(target=summarize, args=(lines, d), daemon=True).start()
+        _sum_thread = threading.Thread(target=summarize, args=(lines, d), daemon=True)
+        _sum_thread.start()
     elif d:
         with lock:
             state["summary_status"] = "本次内容太少，没有生成纪要。"
@@ -367,7 +372,7 @@ def reader(proc):
 
 
 def start_engine(source, file=None):
-    global _proc
+    global _proc, _reader_thread
     with lock:
         if state["engine"] != "off":
             return False
@@ -388,7 +393,8 @@ def start_engine(source, file=None):
         cmd += ["--file", file]
     log = open(os.path.join(HERE, "engine.log"), "a")
     _proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=log, text=True, bufsize=1, cwd=HERE)
-    threading.Thread(target=reader, args=(_proc,), daemon=True).start()
+    _reader_thread = threading.Thread(target=reader, args=(_proc,), daemon=True)
+    _reader_thread.start()
     return True
 
 
@@ -523,15 +529,29 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def shutdown(*_):
-    if overlay_running():
-        _overlay.terminate()
-    if _proc is not None and _proc.poll() is None:
-        _proc.terminate()
-        try:
-            _proc.wait(timeout=20)
-        except subprocess.TimeoutExpired:
-            _proc.kill()
-    os._exit(0)
+    """退出：关悬浮字幕、停引擎；会议还在进行时先把文稿存好、纪要写完再退出。
+    收尾在后台线程里做，期间面板服务照常响应（此时重新打开会议助手能看到纪要进度）。"""
+    global _shutting_down
+    if _shutting_down:
+        return
+    _shutting_down = True
+
+    def finish():
+        if overlay_running():
+            _overlay.terminate()
+        if _proc is not None and _proc.poll() is None:
+            _proc.terminate()
+            try:
+                _proc.wait(timeout=20)
+            except subprocess.TimeoutExpired:
+                _proc.kill()
+        if _reader_thread is not None:
+            _reader_thread.join(timeout=30)
+        if _sum_thread is not None:
+            _sum_thread.join(timeout=900)
+        os._exit(0)
+
+    threading.Thread(target=finish, daemon=True).start()
 
 
 if __name__ == "__main__":

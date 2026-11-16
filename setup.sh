@@ -1,6 +1,6 @@
 #!/bin/sh
 # 在一台新的 Apple Silicon Mac 上安装会议助手。项目需放在 ~/Projects/meeting-copilot。
-# 前置：macOS 14.2+、Xcode 命令行工具（swift）、uv、Google Chrome、Ollama。
+# 前置：macOS 14.2+、Xcode 命令行工具（swift）、uv、Ollama。
 set -e
 cd "$HOME/Projects/meeting-copilot"
 
@@ -12,7 +12,8 @@ fi
 git -C engine/livecaption checkout --quiet da182e0ae496743d975d4de556d3b6e450698a5c
 (cd engine/livecaption && uv sync && bash scripts/build_audiotee.sh)
 
-# 2) 悬浮字幕窗
+# 2) 面板窗口与悬浮字幕窗
+swiftc -O -o panel/MeetingPanel panel/MeetingPanel.swift
 swiftc -O -o overlay/SubtitleOverlay overlay/SubtitleOverlay.swift
 
 # 3) 回答参考 / 提问参考 / 纪要用的本地模型

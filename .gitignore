@@ -2,6 +2,7 @@
 engine/
 # 编译产物
 overlay/SubtitleOverlay
+panel/MeetingPanel
 __pycache__/
 # 个人数据与运行时文件
 my_context.txt
