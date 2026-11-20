@@ -3,10 +3,14 @@ engine/
 # 编译产物
 overlay/SubtitleOverlay
 panel/MeetingPanel
+speaker/axdump
+speaker/axtiles
+speaker/axwatch
 __pycache__/
 # 个人数据与运行时文件
 my_context.txt
 config.json
 *.log
 *.pid
+ollama_started_by_copilot
 .DS_Store

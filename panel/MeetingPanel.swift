@@ -11,6 +11,11 @@ let home = FileManager.default.homeDirectoryForCurrentUser.path
 let projectDir = "\(home)/Projects/meeting-copilot"
 let launcherBundleID = "local.huichu.meeting-assistant"
 
+/// 窗口不在前台时，第一次点击也直接传给页面（否则第一次点击只用来把窗口调到前台，按钮要按两次）
+final class PanelWebView: WKWebView {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+}
+
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNavigationDelegate {
     var window: NSWindow!
     var web: WKWebView!
@@ -22,7 +27,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
 
         let cfg = WKWebViewConfiguration()
         cfg.websiteDataStore = .default()          // localStorage（各模块高度）跨次保留
-        web = WKWebView(frame: .zero, configuration: cfg)
+        web = PanelWebView(frame: .zero, configuration: cfg)
         web.navigationDelegate = self
 
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1000, height: 860),

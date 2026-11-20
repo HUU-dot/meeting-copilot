@@ -70,10 +70,12 @@
   /* 字幕 */
   #subsPane { background:#1c1c1e; color:#fff; border-radius:14px; container-type:size; overflow:hidden; display:flex; }
   @media (prefers-color-scheme: dark) { #subsPane { background:#1c1c1e; border:.5px solid var(--hair); } }
-  #subs { width:100%; padding:10cqh 18px; display:flex; flex-direction:column; justify-content:flex-end; gap:6cqh; overflow:hidden; }
-  .sub .zh { font-size:clamp(17px, 21cqh, 46px); line-height:1.3; font-weight:600; letter-spacing:-.01em; }
-  .sub .en { font-size:clamp(12px, 10cqh, 20px); color:rgba(235,235,245,.6); line-height:1.35; margin-top:2px; }
-  .sub.old { opacity:.45; } .sub.old .zh { font-size:clamp(14px, 14cqh, 30px); font-weight:500; } .sub.old .en { display:none; }
+  /* 每句一样大：字号固定，区域拉大（更宽 → 每句占的行少；更高 → 放得下的句子多）就多显示几句，最新一句贴底，放不下的旧句不显示 */
+  #subs { width:100%; padding:12px 18px; display:flex; flex-direction:column; justify-content:flex-end; gap:10px; overflow:hidden;
+          }
+  .sub { flex:none; }
+  .sub .zh { font-size:19px; line-height:1.35; font-weight:600; letter-spacing:-.01em; }
+  .sub .en { font-size:13px; color:rgba(235,235,245,.62); line-height:1.4; margin-top:2px; }
   .tag { font-size:11px; font-weight:500; border-radius:5px; padding:1px 6px; margin-right:7px; background:rgba(255,255,255,.16); color:rgba(235,235,245,.8); vertical-align:.25em; }
   .hint { color:rgba(235,235,245,.5); font-size:14px; }
 
@@ -133,7 +135,7 @@
 
 <main>
   <section class="wide">
-    <div class="pane" id="subsPane" data-default="124" data-min="64"><div id="subs"></div></div>
+    <div class="pane" id="subsPane" data-default="150" data-min="96"><div id="subs"></div></div>
     <div class="grip" data-for="subsPane" title="上下拖动调节高度，双击恢复默认"></div>
   </section>
 
@@ -243,19 +245,31 @@ paintSource();
 /* ---------- 渲染 ---------- */
 function whoTag(label){ return multi ? `<span class="tag">${label === 'me' ? '我' : '对方'}</span>` : ''; }
 
+// 只显示完整放得下的句子：顶上露出半句的旧句隐藏（最新一句永远显示）
+function fitSubs(){
+  const box = $('subs'), items = [...box.children];
+  if (!items.length) return;
+  const top = box.getBoundingClientRect().top + 6;
+  items.forEach((e, i) => {
+    const v = (i < items.length - 1 && e.getBoundingClientRect().top < top) ? 'hidden' : '';
+    if (e.style.visibility !== v) e.style.visibility = v;
+  });
+}
+new ResizeObserver(() => fitSubs()).observe(document.getElementById('subsPane'));
+const SUB_MAX = 30;   // 最多取最近 30 句，实际显示几句由字幕区大小决定（放不下的被裁掉）
 function subsHTML(s){
-  const items = s.lines.filter(l => l.label !== 'me' || s.source === 'mic').slice(-2).map(l => ({zh:l.zh || '…', en:l.en, label:l.label}));
+  const items = s.lines.filter(l => l.label !== 'me' || s.source === 'mic').slice(-SUB_MAX).map(l => ({zh:l.zh || '…', en:l.en, label:l.label}));
   for (const [label, p] of Object.entries(s.partials || {})) {
     if (label === 'me' && s.source !== 'mic') continue;
     if (p.text) items.push({zh:p.zh || '…', en:p.text, label});
   }
-  const show = items.slice(-2);
+  const show = items.slice(-SUB_MAX);
   if (!show.length) {
     if (s.engine === 'listening') return '<div class="hint">正在听… 有人说英文时这里出字幕。</div>';
     if (s.engine === 'loading') return `<div class="hint">${esc(s.status_msg || '正在加载模型…')}</div>`;
     return '';
   }
-  return show.map((it, i) => `<div class="sub ${i < show.length-1 ? 'old' : ''}"><div class="zh">${whoTag(it.label)}${esc(it.zh)}</div><div class="en">${esc(it.en)}</div></div>`).join('');
+  return show.map(it => `<div class="sub"><div class="zh">${whoTag(it.label)}${esc(it.zh)}</div><div class="en">${esc(it.en)}</div></div>`).join('');
 }
 
 function cardBody(c){
@@ -276,28 +290,34 @@ function renderCard(c){
 }
 
 function setHTML(slot, el, html){ if (last[slot] !== html) { last[slot] = html; el.innerHTML = html; return true; } return false; }
+// 只在真的变了时才改。面板每 0.15 秒刷新一次；如果每次都重写按钮文字，按下和松开之间文字被换掉，
+// WebKit 会判定这次点击无效（按钮要按好几下才响应）。
+function setText(el, t){ if (el.textContent !== t) el.textContent = t; }
+function setClass(el, c){ if (el.className !== c) el.className = c; }
+function setProp(el, k, v){ if (el[k] !== v) el[k] = v; }
 
 function render(s){
   S = s; multi = s.source === 'both';
   const on = s.engine !== 'off';
   // 工具栏
-  $('dot').className = 'dot' + (s.engine === 'listening' ? ' live' : (s.engine === 'loading' || s.engine === 'stopping') ? ' load' : '');
+  setClass($('dot'), 'dot' + (s.engine === 'listening' ? ' live' : (s.engine === 'loading' || s.engine === 'stopping') ? ' load' : ''));
   let txt = {off:'未开始', loading: esc(s.status_msg || '正在加载模型…'), listening:'正在听', stopping:'正在收尾…'}[s.engine];
   if (s.engine === 'listening' && s.lag > 1.5) txt += ` · <span class="warnText">字幕落后约 ${Math.round(s.lag)} 秒，正在追赶</span>`;
   if (s.model_ok === false) txt += ' · <span class="warnText">回答模型未就绪（Ollama 没启动？）</span>';
-  $('statusText').innerHTML = txt;
-  $('toggle').textContent = on ? '停止' : '开始';
-  $('toggle').className = 'btn ' + (on ? 'red' : 'blue');
-  $('toggle').disabled = s.engine === 'stopping';
+  setHTML('status', $('statusText'), txt);
+  setText($('toggle'), on ? '停止' : '开始');
+  setClass($('toggle'), 'btn ' + (on ? 'red' : 'blue'));
+  setProp($('toggle'), 'disabled', s.engine === 'stopping');
   $('source').classList.toggle('disabled', on);
   if (on && source !== s.source) { source = s.source; paintSource(); }
-  $('pip').textContent = s.overlay ? '关闭悬浮字幕' : '悬浮字幕';
+  setText($('pip'), pipShown(s) ? '关闭悬浮字幕' : '悬浮字幕');
   $('warn').style.display = s.warn ? 'block' : 'none';
-  $('warnText').textContent = s.warn || '';
+  setText($('warnText'), s.warn || '');
   // 字幕
   setHTML('subs', $('subs'), subsHTML(s));
+  fitSubs();
   // 回答参考
-  $('answer').disabled = $('ask').disabled = s.busy || !s.n_lines;
+  setProp($('answer'), 'disabled', !!(s.busy || !s.n_lines)); setProp($('ask'), 'disabled', !!(s.busy || !s.n_lines));
   if (s.cards.length) lastTopId = s.cards[0].id;
   setHTML('cards', $('cards'), s.cards.length ? s.cards.map(renderCard).join('')
     : '<div class="empty"><b>现在给回答</b>：对方问了你问题时按，针对文稿最近 1–3 句里的问题给出可以直接说的英文。<br><b>现在给提问</b>：听完别人的发言想提问时按，给出两个备选问题供你挑一个。</div>');
@@ -307,28 +327,44 @@ function render(s){
   for (const p of Object.values(s.partials || {})) if (p.text) h += `<div class="ln part">${esc(p.text)}</div>`;
   const stick = box.scrollHeight - box.scrollTop - box.clientHeight < 60;
   if (setHTML('tx', box, h || '<div class="empty">暂无文稿</div>') && stick) box.scrollTop = box.scrollHeight;
-  $('count').textContent = s.n_lines ? s.n_lines + ' 句' : '';
+  setText($('count'), s.n_lines ? s.n_lines + ' 句' : '');
   // 保存
-  $('saveDir').textContent = s.save_dir || '';
-  $('choose').disabled = on;
-  $('choose').title = on ? '会议进行中不能更换，停止后再选' : '';
-  $('sumStatus').textContent = s.summary_status || DEFAULT_SUM;
+  setText($('saveDir'), s.save_dir || '');
+  setProp($('choose'), 'disabled', on);
+  setProp($('choose'), 'title', on ? '会议进行中不能更换，停止后再选' : '');
+  setText($('sumStatus'), s.summary_status || DEFAULT_SUM);
   if (!ctxLoaded) { $('ctx').value = s.context || ''; ctxLoaded = true; }
 }
 
 async function tick(){
   try { render(await (await fetch('/state')).json()); }
-  catch(e){ $('statusText').textContent = '会议助手服务未运行，请重新打开"会议助手"'; $('dot').className = 'dot'; }
+  catch(e){ last.status = null; setText($('statusText'), '会议助手服务未运行，请重新打开"会议助手"'); setClass($('dot'), 'dot'); }
 }
 
-$('toggle').onclick = () => (S && S.engine !== 'off') ? post('/stop') : post('/start', { source });
+// 开始/停止同样防连击：引擎状态要过一会儿才变，期间再按不再触发相反的操作
+let toggleUntil = 0;
+$('toggle').onclick = () => {
+  if (Date.now() < toggleUntil) return;
+  toggleUntil = Date.now() + 1500;
+  (S && S.engine !== 'off') ? post('/stop') : post('/start', { source });
+};
 $('answer').onclick = () => post('/answer');
 $('ask').onclick = () => post('/ask');
 $('clear').onclick = () => post('/clear');
 $('folder').onclick = () => post('/open_folder');
 $('choose').onclick = () => post('/choose_folder');
 $('warnClose').onclick = () => post('/dismiss_warn');
-$('pip').onclick = () => post('/overlay');
+// 悬浮字幕：按一下就切换。发给后台的是“要开”还是“要关”（不是“切换”），
+// 按钮文字立刻变；字幕窗启动要半秒左右，这段时间里再按也不会被误当成第二次切换。
+let pipWant = null, pipUntil = 0;
+function pipShown(s){ return (pipWant !== null && Date.now() < pipUntil) ? pipWant : !!s.overlay; }
+$('pip').onclick = () => {
+  if (Date.now() < pipUntil) return;
+  pipWant = !(S && pipShown(S));
+  pipUntil = Date.now() + 1200;
+  $('pip').textContent = pipWant ? '关闭悬浮字幕' : '悬浮字幕';
+  post('/overlay', { on: pipWant });
+};
 $('saveCtx').onclick = async () => { await post('/context', { text: $('ctx').value }); $('ctxMsg').textContent = '已保存'; setTimeout(() => $('ctxMsg').textContent = '', 1500); };
 
 setInterval(tick, 150); tick();

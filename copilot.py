@@ -21,6 +21,10 @@ DRIVER = os.path.join(HERE, "engine_driver.py")
 OVERLAY_BIN = os.path.join(HERE, "overlay", "SubtitleOverlay")
 OLLAMA = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")
 MODEL = os.environ.get("COPILOT_MODEL", "gemma3:12b")
+# 回答模型的内存：会议助手开着就一直留在内存里（按按钮不用等加载），退出时卸载。
+# 设成 3 小时而不是永久，是为了万一会议助手异常退出没来得及卸载，最多 3 小时后 Ollama 也会自己释放。
+KEEP_ALIVE = "3h"
+OLLAMA_FLAG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ollama_started_by_copilot")
 PORT = int(os.environ.get("COPILOT_PORT", "8766"))
 CONTEXT_FILE = os.path.join(HERE, "my_context.txt")
 CONFIG_FILE = os.environ.get("COPILOT_CONFIG", os.path.join(HERE, "config.json"))
@@ -172,7 +176,7 @@ def save_transcript():
 def ollama_stream(messages, num_predict=260):
     opts = {"temperature": 0.3, "num_predict": num_predict, "num_ctx": NUM_CTX}
     body = json.dumps({"model": MODEL, "messages": messages, "stream": True,
-                       "keep_alive": "30m", "options": opts}).encode()
+                       "keep_alive": KEEP_ALIVE, "options": opts}).encode()
     req = urllib.request.Request(OLLAMA + "/api/chat", data=body, headers={"Content-Type": "application/json"})
     with urllib.request.urlopen(req, timeout=300) as r:
         for raw in r:
@@ -421,26 +425,39 @@ def overlay_running():
     return _overlay is not None and _overlay.poll() is None
 
 
-def toggle_overlay():
-    """开/关原生悬浮字幕窗。"""
+_overlay_lock = threading.Lock()
+
+
+def toggle_overlay(want=None):
+    """开/关原生悬浮字幕窗。want=True/False 表示要开/要关（重复请求无副作用）；None 表示切换。返回操作后是否开着。"""
     global _overlay
-    if overlay_running():
-        _overlay.terminate()
-        _overlay = None
-        return False
-    _overlay = subprocess.Popen([OVERLAY_BIN, str(PORT)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    return True
+    with _overlay_lock:
+        running = overlay_running()
+        if want is None:
+            want = not running
+        if want and not running:
+            _overlay = subprocess.Popen([OVERLAY_BIN, str(PORT)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        elif not want and running:
+            _overlay.terminate()
+            _overlay = None
+        return bool(want)
 
 
 def warmup():
-    try:
-        for _ in ollama_stream([{"role": "user", "content": "hi"}], num_predict=2):
-            break
-        with lock:
-            state["model_ok"] = True
-    except Exception:
-        with lock:
-            state["model_ok"] = False
+    """打开会议助手时把回答模型预先装进内存。Ollama 可能刚被打开、还没就绪，最多重试 60 秒。"""
+    for attempt in range(30):
+        if _shutting_down:
+            return
+        try:
+            for _ in ollama_stream([{"role": "user", "content": "hi"}], num_predict=2):
+                break
+            with lock:
+                state["model_ok"] = True
+            return
+        except Exception:
+            time.sleep(2)
+    with lock:
+        state["model_ok"] = False
 
 
 # ---------------------------------------------------------------- HTTP
@@ -498,7 +515,8 @@ class Handler(BaseHTTPRequestHandler):
         elif self.path == "/stop":
             stop_engine()
         elif self.path == "/overlay":
-            ok = toggle_overlay()
+            on = body.get("on")
+            toggle_overlay(None if on is None else bool(on))
         elif self.path == "/answer":
             threading.Thread(target=make_card, args=("answer",), daemon=True).start()
         elif self.path == "/ask":
@@ -528,6 +546,23 @@ class Handler(BaseHTTPRequestHandler):
         self._send(200, json.dumps({"ok": bool(ok)}))
 
 
+def release_model():
+    """退出时把回答模型从内存里卸载；Ollama 若是会议助手打开的，也一并退出。"""
+    try:
+        body = json.dumps({"model": MODEL, "keep_alive": 0}).encode()
+        urllib.request.urlopen(urllib.request.Request(OLLAMA + "/api/generate", data=body,
+                               headers={"Content-Type": "application/json"}), timeout=20).read()
+    except Exception:
+        pass
+    if os.path.exists(OLLAMA_FLAG):
+        try:
+            os.remove(OLLAMA_FLAG)
+        except OSError:
+            pass
+        subprocess.run(["pkill", "-x", "Ollama"], check=False)
+        subprocess.run(["pkill", "-f", "Ollama.app/Contents/Resources/ollama serve"], check=False)
+
+
 def shutdown(*_):
     """退出：关悬浮字幕、停引擎；会议还在进行时先把文稿存好、纪要写完再退出。
     收尾在后台线程里做，期间面板服务照常响应（此时重新打开会议助手能看到纪要进度）。"""
@@ -549,6 +584,7 @@ def shutdown(*_):
             _reader_thread.join(timeout=30)
         if _sum_thread is not None:
             _sum_thread.join(timeout=900)
+        release_model()
         os._exit(0)
 
     threading.Thread(target=finish, daemon=True).start()
