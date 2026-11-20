@@ -4,6 +4,13 @@
 set -e
 cd "$HOME/Projects/meeting-copilot"
 
+# 安装器和面板使用同一个启动器标识，才能在关闭面板时找到启动器。
+LAUNCHER_BUNDLE_ID=$(sed -n 's/^let launcherBundleID = "\([A-Za-z0-9.-]*\)"$/\1/p' panel/MeetingPanel.swift)
+if [ -z "$LAUNCHER_BUNDLE_ID" ]; then
+  echo "无法从 panel/MeetingPanel.swift 读取启动器标识。" >&2
+  exit 1
+fi
+
 # 1) 语音引擎 livecaption（固定到已验证的版本；它没有开源许可证，只在本机使用，不随本仓库分发）
 if [ ! -d engine/livecaption/.git ]; then
   mkdir -p engine
@@ -26,6 +33,6 @@ osacompile -s -o "$APP" launcher/launcher.applescript
 PB=/usr/libexec/PlistBuddy; PLIST="$APP/Contents/Info.plist"
 $PB -c "Set :NSMicrophoneUsageDescription 会议助手需要麦克风来识别你在会议中说的话。" "$PLIST"
 $PB -c "Add :NSAudioCaptureUsageDescription string 会议助手需要录制系统声音来生成字幕和会议文稿。" "$PLIST"
-$PB -c "Set :CFBundleIdentifier local.meeting-assistant" "$PLIST" 2>/dev/null || $PB -c "Add :CFBundleIdentifier string local.meeting-assistant" "$PLIST"
+$PB -c "Set :CFBundleIdentifier $LAUNCHER_BUNDLE_ID" "$PLIST" 2>/dev/null || $PB -c "Add :CFBundleIdentifier string $LAUNCHER_BUNDLE_ID" "$PLIST"
 codesign --force --deep -s - "$APP"
 echo "完成。打开 /Applications/会议助手.app；首次点开始会下载识别和翻译模型（约 3.5 GB）。"

@@ -8,7 +8,7 @@ if ! pgrep -x Ollama >/dev/null 2>&1 && ! curl -s -m 1 http://127.0.0.1:11434/ap
 fi
 open -g -a /Applications/Ollama.app
 if ! curl -s -m 1 http://127.0.0.1:8766/state >/dev/null 2>&1; then
-  nohup "$HOME/.local/bin/python3" copilot.py >> copilot.log 2>&1 </dev/null &
+  nohup engine/livecaption/.venv/bin/python copilot.py >> copilot.log 2>&1 </dev/null &
   echo $! > copilot.pid
 fi
 PID=$(pgrep -f "^$PANEL" | head -1)
