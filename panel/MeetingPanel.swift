@@ -9,7 +9,11 @@ let port = CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : "8766"
 let panelURL = URL(string: "http://127.0.0.1:\(port)/")!
 let home = FileManager.default.homeDirectoryForCurrentUser.path
 let projectDir = "\(home)/Projects/meeting-copilot"
-let launcherBundleID = "local.huichu.meeting-assistant"
+let launcherURL = URL(fileURLWithPath: "/Applications/会议助手.app", isDirectory: true)
+
+func isLauncherBundle(_ bundleURL: URL?, installedAt launcherURL: URL) -> Bool {
+    bundleURL?.resolvingSymlinksInPath().path == launcherURL.resolvingSymlinksInPath().path
+}
 
 /// 窗口不在前台时，第一次点击也直接传给页面（否则第一次点击只用来把窗口调到前台，按钮要按两次）
 final class PanelWebView: WKWebView {
@@ -81,7 +85,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
         try? p.run()
         p.waitUntilExit()
         // Dock 里的“会议助手”一起退出（它的退出处理会再跑一次 stop.sh，重复无害）
-        for app in NSRunningApplication.runningApplications(withBundleIdentifier: launcherBundleID) {
+        for app in NSWorkspace.shared.runningApplications where isLauncherBundle(app.bundleURL, installedAt: launcherURL) {
             app.terminate()
         }
     }

@@ -4,13 +4,6 @@
 set -e
 cd "$HOME/Projects/meeting-copilot"
 
-# 安装器和面板使用同一个启动器标识，才能在关闭面板时找到启动器。
-LAUNCHER_BUNDLE_ID=$(sed -n 's/^let launcherBundleID = "\([A-Za-z0-9.-]*\)"$/\1/p' panel/MeetingPanel.swift)
-if [ -z "$LAUNCHER_BUNDLE_ID" ]; then
-  echo "无法从 panel/MeetingPanel.swift 读取启动器标识。" >&2
-  exit 1
-fi
-
 # 1) 语音引擎 livecaption（固定到已验证的版本；它没有开源许可证，只在本机使用，不随本仓库分发）
 if [ ! -d engine/livecaption/.git ]; then
   mkdir -p engine
@@ -28,6 +21,7 @@ swiftc -O -o overlay/SubtitleOverlay overlay/SubtitleOverlay.swift
 
 # 4) 启动器（常驻应用；重建后需要重新授予麦克风和系统录音权限）
 APP="/Applications/会议助手.app"
+LAUNCHER_BUNDLE_ID="local.meeting-assistant"
 rm -rf "$APP"
 osacompile -s -o "$APP" launcher/launcher.applescript
 PB=/usr/libexec/PlistBuddy; PLIST="$APP/Contents/Info.plist"

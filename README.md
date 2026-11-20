@@ -32,10 +32,6 @@
 把仓库放到 `~/Projects/meeting-copilot`，运行 `./setup.sh`，然后打开 `/Applications/会议助手.app`。
 首次使用需要在系统设置里允许麦克风和「仅系统音频录制」。
 
-## 不在仓库里的东西
-
-个人背景资料（`my_context.txt`）、保存位置设置（`config.json`）、日志、会议文稿与纪要（默认在 `~/Documents/会议记录`）。
-
 ## 许可证
 
 本仓库代码以 MIT 许可证发布，见 `LICENSE`。语音引擎 livecaption 不在本仓库内，其使用受原项目条款约束。
